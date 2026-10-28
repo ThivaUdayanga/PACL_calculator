@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PACL Coagulant Dosage Calculator | Water Treatment Engineering</title>
+  <meta name="description"
+    content="Precision Poly Aluminium Chloride (PACL) Coagulant Dosing Calculator dynamically driven by Empirical Jar Test Database for pH and Turbidity.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js CDN for dynamic jar test curves -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body class="dark-theme">
+  <div class="app-wrapper">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-container">
+        <div class="brand">
+          <div class="brand-icon">
+            <i class="fa-solid fa-flask-vial"></i>
+          </div>
+          <div class="brand-text">
+            <h1>PACL Dosing Calculator</h1>
+            <p class="subtitle">Empirical Jar Test Coagulation Engine & Dosage Estimator</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- Database Live Status Pill -->
+          <div id="dbStatusPill" class="db-status-pill" title="Database Connection Status">
+            <span class="status-dot online"></span>
+            <span id="dbStatusText">Connected to Database</span>
+          </div>
+
+          <button id="themeToggleBtn" class="btn btn-icon" title="Toggle Theme" aria-label="Toggle Theme">
+            <i class="fa-solid fa-moon"></i>
+          </button>
+
+          <a href="records.html" class="btn btn-primary" title="Manage Jar Test Database Records">
+            <i class="fa-solid fa-table-list"></i> <span>Manage Test Records</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="main-container">
+
+      <!-- Main Calculator Grid Layout -->
+      <div class="calculator-grid">
+
+        <!-- Left Panel: Water Parameters Input -->
+        <section class="card input-card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fa-solid fa-sliders"></i>
+              <h2>Water Parameters Input</h2>
+            </div>
+            <span class="badge badge-primary">Step 1 & 2</span>
+          </div>
+
+          <div class="card-body">
+            <!-- 1. pH Selection Section -->
+            <div class="form-group">
+              <div class="label-row">
+                <label for="phSelector" class="form-label">
+                  <i class="fa-solid fa-droplet text-cyan"></i> 1. Select Raw Water pH
+                </label>
+                <span class="label-hint" id="selectedPhHint">Calibrated Benchmark</span>
+              </div>
+
+              <!-- Quick pH Chips / Buttons (Populated dynamically from Database) -->
+              <div class="ph-chip-group" id="phChipGroup">
+                <!-- Dynamically populated from database records -->
+              </div>
+
+              <!-- <div class="input-with-select">
+                <div class="select-wrapper">
+                  <select id="phSelector" class="form-control form-select">
+                    Populated dynamically from database
+                  </select>
+                </div>
+                <div class="custom-ph-input-wrap hidden" id="customPhWrap">
+                  <input type="number" id="customPhInput" class="form-control" placeholder="e.g. 6.70" step="0.01"
+                    min="0" max="14">
+                </div>
+              </div>
+              <small class="helper-text" id="phCalibrationNote">
+                <i class="fa-solid fa-circle-info"></i> Connecting to database...
+              </small> -->
+            </div>
+
+            <!-- 2. Turbidity Input Section -->
+            <div class="form-group">
+              <div class="label-row">
+                <label for="turbidityInput" class="form-label">
+                  <i class="fa-solid fa-water text-emerald"></i> 2. Enter Turbidity (NTU)
+                </label>
+                <span class="turbidity-display-badge" id="turbidityBadge">6.10 NTU</span>
+              </div>
+
+              <div class="number-input-group">
+                <div class="input-icon-wrapper">
+                  <i class="fa-solid fa-chart-line"></i>
+                  <input type="number" id="turbidityInput" class="form-control form-control-lg" value="6.10" step="0.01"
+                    min="0" max="500" placeholder="e.g. 7.5">
+                </div>
+                <span class="input-unit">NTU</span>
+              </div>
+
+              <!-- Quick Presets -->
+              <!-- <div class="preset-pills">
+                <span class="preset-label">Presets:</span>
+                <button type="button" class="preset-btn" data-turbidity="1.97">1.97 (Low)</button>
+                <button type="button" class="preset-btn" data-turbidity="6.10">6.10 (Normal)</button>
+                <button type="button" class="preset-btn" data-turbidity="12.70">12.70 (Elevated)</button>
+                <button type="button" class="preset-btn" data-turbidity="55.30">55.30 (High)</button>
+                <button type="button" class="preset-btn" data-turbidity="201.00">201.00 (Monsoon)</button>
+              </div> -->
+
+              <!-- Slider for smooth adjustment -->
+              <!-- <div class="slider-wrapper">
+                <div class="slider-labels">
+                  <span>0.5 NTU</span>
+                  <span>100 NTU</span>
+                  <span>250+ NTU</span>
+                </div>
+                <input type="range" id="turbiditySlider" class="form-range" min="0.5" max="120" step="0.1" value="6.10">
+              </div> -->
+            </div>
+
+            <!-- Chemical Plant Dosing Estimator (Accordion) -->
+            <!-- <div class="accordion-item" id="plantCalcAccordion">
+              <button type="button" class="accordion-header" id="togglePlantCalc">
+                <span><i class="fa-solid fa-industry text-amber"></i> Plant Scale Chemical Dosing Estimator</span>
+                <i class="fa-solid fa-chevron-down accordion-arrow"></i>
+              </button>
+              <div class="accordion-body hidden" id="plantCalcBody">
+                <div class="plant-grid">
+                  <div class="form-group mb-2">
+                    <label class="form-label-sm" for="flowRateInput">Water Flow Rate (m³/h)</label>
+                    <input type="number" id="flowRateInput" class="form-control form-control-sm" value="250" min="1"
+                      step="10">
+                  </div>
+                  <div class="form-group mb-2">
+                    <label class="form-label-sm" for="paclDensityInput">PACL Density (kg/L)</label>
+                    <input type="number" id="paclDensityInput" class="form-control form-control-sm" value="1.20"
+                      step="0.01">
+                  </div>
+                </div>
+                <div class="plant-result-pills">
+                  <div class="plant-pill">
+                    <span class="plant-pill-lbl">Daily PACL Requirement</span>
+                    <span class="plant-pill-val" id="dailyKgResult">3.00 kg/day</span>
+                  </div>
+                  <div class="plant-pill">
+                    <span class="plant-pill-lbl">Metering Pump Rate</span>
+                    <span class="plant-pill-val" id="pumpLphResult">0.104 L/hr</span>
+                  </div>
+                </div>
+              </div>
+            </div> -->
+
+          </div>
+        </section>
+
+        <!-- Right Panel: Dosage Result & Analysis -->
+        <section class="card result-card">
+          <div class="card-header">
+            <div class="card-title">
+              <i class="fa-solid fa-circle-check text-success"></i>
+              <h2>Recommended PACL Dosage</h2>
+            </div>
+            <span class="calculation-method-badge" id="calcMethodBadge">
+              <i class="fa-solid fa-microchip"></i> Linear Interpolation
+            </span>
+          </div>
+
+          <div class="card-body result-body">
+            <!-- Hero PACL Dosage Display -->
+            <div class="dosage-hero">
+              <div class="dosage-glow-bg"></div>
+              <div class="dosage-header-sub">OPTIMAL PACL DOSE</div>
+
+              <div class="dosage-value-container">
+                <span class="dosage-number" id="paclValueDisplay">0.50</span>
+                <div class="dosage-unit-block">
+                  <span class="dosage-unit" id="paclUnitDisplay">mg/L</span>
+                  <span class="dosage-unit-alt">(ppm PACL)</span>
+                </div>
+              </div>
+
+              <!-- Dosage Metadata Row -->
+              <div class="dosage-meta-row">
+                <!-- <div class="meta-item">
+                  <span class="meta-lbl">Operating Range</span>
+                  <span class="meta-val" id="paclRangeDisplay">0.40 - 0.60 mg/L</span>
+                </div> -->
+                <!-- <div class="meta-divider"></div> -->
+                <div class="meta-item">
+                  <span class="meta-lbl">Closest Lab Jar Test</span>
+                  <span class="meta-val" id="closestPointDisplay">6.10 NTU → 0.50 mg/L</span>
+                </div>
+                <!-- <div class="meta-divider"></div>
+                <div class="meta-item">
+                  <span class="meta-lbl">Calibration Status</span>
+                  <span class="meta-val text-emerald" id="calibrationStatus">Verified Benchmark</span>
+                </div> -->
+              </div>
+            </div>
+
+            <!-- Interpolation & Calibration Details Box -->
+            <!-- <div class="interpolation-details-box">
+              <div class="box-title">
+                <i class="fa-solid fa-brackets-curly text-cyan"></i>
+                <span>Database Calibration Brackets</span>
+              </div>
+              <div class="bracket-grid">
+                <div class="benchmark-card" id="lowerBenchmarkCard">
+                  <div class="bm-tag">Lower Test Point</div>
+                  <div class="bm-data">
+                    <span class="bm-turb" id="lowerTurb">6.00 NTU</span>
+                    <span>→</span>
+                    <span class="bm-pacl" id="lowerPacl">0.40 mg/L</span>
+                  </div>
+                </div>
+
+                <div class="bracket-indicator">
+                  <i class="fa-solid fa-arrows-left-right"></i>
+                  <span>Interpolating</span>
+                </div>
+
+                <div class="benchmark-card" id="upperBenchmarkCard">
+                  <div class="bm-tag">Upper Test Point</div>
+                  <div class="bm-data">
+                    <span class="bm-turb" id="upperTurb">7.20 NTU</span>
+                    <span>→</span>
+                    <span class="bm-pacl" id="upperPacl">0.60 mg/L</span>
+                  </div>
+                </div>
+              </div>
+
+              <p class="explanation-note" id="calcExplanation">
+                Interpolated precisely between laboratory empirical jar test calibration points.
+              </p>
+            </div> -->
+
+            <!-- Operational Engineering Guidance -->
+            <!-- <div
+              style="background: rgba(6, 182, 212, 0.05); border: 1px solid rgba(6, 182, 212, 0.2); border-radius: var(--radius-sm); padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: flex-start; gap: 0.6rem;">
+              <i class="fa-solid fa-circle-info text-cyan" style="margin-top: 0.15rem;"></i>
+              <span id="plantGuidanceText">
+                Standard operating window. Maintain rapid flash mixing (G ≈ 300 s⁻¹) for 45-60 sec, followed by slow
+                flocculation for optimal clarification.
+              </span>
+            </div> -->
+
+          </div>
+        </section>
+      </div>
+
+      <!-- Interactive Chart Section (Empirical Jar Test Coagulation Curve) -->
+      <!-- <section class="card chart-card">
+        <div class="card-header">
+          <div class="card-title">
+            <i class="fa-solid fa-chart-area"></i>
+            <h2>Jar Test Coagulation Curve (Turbidity vs PACL)</h2>
+          </div>
+          <div class="chart-controls" style="display: flex; align-items: center; gap: 0.6rem;">
+            <span class="chart-badge" id="chartPhBadge" style="background: var(--bg-input); border: 1px solid var(--border-color); padding: 0.25rem 0.65rem; border-radius: var(--radius-full); font-size: 0.75rem; color: var(--text-secondary);">
+              <i class="fa-solid fa-filter"></i> Series: pH 6.6
+            </span>
+            <button id="toggleLogScale" class="btn btn-sm btn-outline">
+              <i class="fa-solid fa-arrows-split-up-and-left"></i> Toggle Log / Linear Scale
+            </button>
+          </div>
+        </div>
+        <div class="card-body chart-body">
+          <div class="chart-container" style="position: relative; height: 320px; width: 100%;">
+            <canvas id="paclChart"></canvas>
+          </div>
+          <div class="chart-legend-custom" style="display: flex; justify-content: center; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary); flex-wrap: wrap;">
+            <span class="legend-item" style="display: flex; align-items: center; gap: 0.4rem;">
+              <span style="width: 10px; height: 10px; border-radius: 50%; background: #06b6d4; display: inline-block;"></span> Database Jar Test Records
+            </span>
+            <span class="legend-item" style="display: flex; align-items: center; gap: 0.4rem;">
+              <span style="width: 20px; height: 3px; background: #3b82f6; display: inline-block;"></span> Interpolated Dosage Curve
+            </span>
+            <span class="legend-item" style="display: flex; align-items: center; gap: 0.4rem;">
+              <span style="width: 12px; height: 12px; border-radius: 50%; background: #f43f5e; display: inline-block; box-shadow: 0 0 6px #f43f5e;"></span> Current Input Operating Point
+            </span>
+          </div>
+        </div>
+      </section> -->
+
+    </main>
+
+    <!-- Footer -->
+    <!-- <footer class="app-footer">
+      <div class="footer-container">
+        <p>© 2026 Water Treatment & Process Chemistry Engineering • PACL Coagulation Database Engine</p>
+        <p class="footer-sub">All calculations derived directly from live database laboratory jar test matrix.</p>
+      </div>
+    </footer> -->
+  </div>
+
+  <!-- Notification Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Scripts: Database-driven (No hardcoded data.js) -->
+  <script src="app.js"></script>
+</body>
+
+</html>
