@@ -17,6 +17,7 @@ const state = {
   tableFilter: '',
   seriesFilter: 'all',
   pendingDeleteRecord: null,
+  pendingDuplicate: null,
   theme: 'dark',
   isLoading: false,
   pagination: {
@@ -61,6 +62,8 @@ const elements = {
   modalPhInput: document.getElementById('modalPhInput'),
   modalTurbidityInput: document.getElementById('modalTurbidityInput'),
   modalPaclInput: document.getElementById('modalPaclInput'),
+  modalDuplicateNotice: document.getElementById('modalDuplicateNotice'),
+  modalDuplicateNoticeText: document.getElementById('modalDuplicateNoticeText'),
   modalDateInput: document.getElementById('modalDateInput'),
   modalStatusInput: document.getElementById('modalStatusInput'),
   saveRecordBtn: document.getElementById('saveRecordBtn'),
@@ -72,6 +75,19 @@ const elements = {
   cancelDeleteBtn: document.getElementById('cancelDeleteBtn'),
   confirmDeleteBtn: document.getElementById('confirmDeleteBtn'),
   deleteRecordDetails: document.getElementById('deleteRecordDetails'),
+
+  // Duplicate Confirmation Modal elements
+  duplicateModal: document.getElementById('duplicateModal'),
+  closeDuplicateModalBtn: document.getElementById('closeDuplicateModalBtn'),
+  cancelDuplicateBtn: document.getElementById('cancelDuplicateBtn'),
+  confirmDuplicateBtn: document.getElementById('confirmDuplicateBtn'),
+  dupExistingId: document.getElementById('dupExistingId'),
+  dupExistingPh: document.getElementById('dupExistingPh'),
+  dupExistingTurb: document.getElementById('dupExistingTurb'),
+  dupExistingPacl: document.getElementById('dupExistingPacl'),
+  dupExistingDate: document.getElementById('dupExistingDate'),
+  dupExistingStatus: document.getElementById('dupExistingStatus'),
+  dupNewPaclInput: document.getElementById('dupNewPaclInput'),
 
   toastContainer: document.getElementById('toastContainer')
 };
@@ -132,7 +148,7 @@ function toggleTheme() {
 
 function buildPageUrl(page) {
   const params = new URLSearchParams({
-    page:  page,
+    page: page,
     limit: state.pagination.limit
   });
   if (state.tableFilter) params.set('search', state.tableFilter);
@@ -178,13 +194,13 @@ async function fetchRecords(silent = false) {
       const data = json.data;
       if (data.records !== undefined) {
         state.records = data.records;
-        state.pagination.total      = data.total;
-        state.pagination.page       = data.page;
+        state.pagination.total = data.total;
+        state.pagination.page = data.page;
         state.pagination.totalPages = data.total_pages;
-        state.pagination.limit      = data.limit;
+        state.pagination.limit = data.limit;
 
         const start = (state.pagination.page - 1) * state.pagination.limit + 1;
-        const end   = start + state.records.length - 1;
+        const end = start + state.records.length - 1;
         updateDbStatus(true, `${data.total} Records Connected`);
         if (elements.tableCountBadge) {
           elements.tableCountBadge.textContent =
@@ -192,7 +208,7 @@ async function fetchRecords(silent = false) {
         }
       } else if (Array.isArray(data)) {
         state.records = data;
-        state.pagination.total      = data.length;
+        state.pagination.total = data.length;
         state.pagination.totalPages = 1;
         updateDbStatus(true, `${data.length} Records Connected`);
         if (elements.tableCountBadge) {
@@ -392,7 +408,7 @@ function renderPagination() {
   };
 
   const start = (page - 1) * limit + 1;
-  const end   = Math.min(page * limit, total);
+  const end = Math.min(page * limit, total);
 
   let html = '<div class="pagination-controls">';
   html += `<span class="pagination-info">Showing ${start}–${end} of <strong>${total}</strong> records</span>`;
@@ -415,7 +431,7 @@ function renderPagination() {
   bar.innerHTML = html;
 }
 
-window.goToPage = function(p) {
+window.goToPage = function (p) {
   const { totalPages } = state.pagination;
   p = Math.max(1, Math.min(p, totalPages));
   if (p === state.pagination.page) return;
@@ -446,13 +462,40 @@ function escapeHtml(str) {
    Calculator Integration
    ========================================================================== */
 
-window.applyRecordToCalculator = function(phVal, turbVal) {
+window.applyRecordToCalculator = function (phVal, turbVal) {
   window.location.href = `index.html?ph=${encodeURIComponent(phVal)}&turbidity=${encodeURIComponent(turbVal)}`;
 };
 
 /* ==========================================================================
    Add / Edit Modal Operations
    ========================================================================== */
+
+function checkInputDuplicateNotice() {
+  if (!elements.modalPhInput || !elements.modalTurbidityInput || !elements.modalDuplicateNotice) return;
+  const ph = parseFloat(elements.modalPhInput.value);
+  const turb = parseFloat(elements.modalTurbidityInput.value);
+  const currentId = elements.recordId && elements.recordId.value ? parseInt(elements.recordId.value, 10) : null;
+
+  if (isNaN(ph) || isNaN(turb)) {
+    elements.modalDuplicateNotice.classList.add('hidden');
+    return;
+  }
+
+  const dup = state.allRecords.find(r =>
+    Math.abs(Number(r.ph) - ph) < 0.001 &&
+    Math.abs(Number(r.turbidity) - turb) < 0.001 &&
+    (!currentId || Number(r.id) !== currentId)
+  );
+
+  if (dup) {
+    if (elements.modalDuplicateNoticeText) {
+      elements.modalDuplicateNoticeText.innerHTML = `Notice: Already has this record.`;
+    }
+    elements.modalDuplicateNotice.classList.remove('hidden');
+  } else {
+    elements.modalDuplicateNotice.classList.add('hidden');
+  }
+}
 
 function openAddModal() {
   if (elements.modalTitle) elements.modalTitle.textContent = 'Add Jar Test Calibration Record';
@@ -462,11 +505,13 @@ function openAddModal() {
   if (elements.modalPaclInput) elements.modalPaclInput.value = '';
   if (elements.modalDateInput) elements.modalDateInput.value = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   if (elements.modalStatusInput) elements.modalStatusInput.value = 'Verified';
+  if (elements.modalDuplicateNotice) elements.modalDuplicateNotice.classList.add('hidden');
   if (elements.saveBtnText) elements.saveBtnText.textContent = 'Save Record';
   if (elements.recordModal) elements.recordModal.classList.remove('hidden');
+  checkInputDuplicateNotice();
 }
 
-window.openEditModal = function(id) {
+window.openEditModal = function (id) {
   const rec = state.records.find(r => r.id === id);
   if (!rec) {
     showToast('Record not found', 'error');
@@ -480,12 +525,98 @@ window.openEditModal = function(id) {
   if (elements.modalPaclInput) elements.modalPaclInput.value = rec.pacl;
   if (elements.modalDateInput) elements.modalDateInput.value = rec.test_date || '';
   if (elements.modalStatusInput) elements.modalStatusInput.value = rec.status || 'Verified';
+  if (elements.modalDuplicateNotice) elements.modalDuplicateNotice.classList.add('hidden');
   if (elements.saveBtnText) elements.saveBtnText.textContent = 'Update Record';
   if (elements.recordModal) elements.recordModal.classList.remove('hidden');
 };
 
 function closeRecordModal() {
+  if (elements.modalDuplicateNotice) elements.modalDuplicateNotice.classList.add('hidden');
   if (elements.recordModal) elements.recordModal.classList.add('hidden');
+}
+
+/* ==========================================================================
+   Duplicate Confirmation Modal Operations
+   ========================================================================== */
+
+function openDuplicateModal(existingRecord, newPayload) {
+  state.pendingDuplicate = { existingRecord, newPayload };
+
+  if (elements.dupExistingId) elements.dupExistingId.textContent = existingRecord.id;
+  if (elements.dupExistingPh) elements.dupExistingPh.textContent = Number(existingRecord.ph).toFixed(2);
+  if (elements.dupExistingTurb) elements.dupExistingTurb.textContent = `${Number(existingRecord.turbidity).toFixed(2)} NTU`;
+  if (elements.dupExistingPacl) elements.dupExistingPacl.textContent = `${Number(existingRecord.pacl).toFixed(2)} mg/L`;
+  if (elements.dupExistingDate) elements.dupExistingDate.textContent = formatDateOnly(existingRecord.created_at || existingRecord.test_date);
+  if (elements.dupExistingStatus) elements.dupExistingStatus.textContent = existingRecord.status || 'Verified';
+
+  // Pre-fill editable result with the new PACL dosage value entered by the user
+  if (elements.dupNewPaclInput) {
+    elements.dupNewPaclInput.value = newPayload.pacl;
+    setTimeout(() => {
+      elements.dupNewPaclInput.focus();
+      elements.dupNewPaclInput.select();
+    }, 120);
+  }
+
+  if (elements.duplicateModal) {
+    elements.duplicateModal.classList.remove('hidden');
+  }
+}
+
+function closeDuplicateModal() {
+  state.pendingDuplicate = null;
+  if (elements.duplicateModal) {
+    elements.duplicateModal.classList.add('hidden');
+  }
+}
+
+async function handleConfirmDuplicate() {
+  if (!state.pendingDuplicate) return;
+  const { existingRecord, newPayload } = state.pendingDuplicate;
+
+  const editedPacl = parseFloat(elements.dupNewPaclInput.value);
+  if (isNaN(editedPacl) || editedPacl <= 0) {
+    showToast('Please enter a valid PACL dosage result.', 'error');
+    if (elements.dupNewPaclInput) elements.dupNewPaclInput.focus();
+    return;
+  }
+
+  if (elements.confirmDuplicateBtn) elements.confirmDuplicateBtn.disabled = true;
+
+  try {
+    const updatePayload = {
+      id: existingRecord.id,
+      ph: existingRecord.ph,
+      turbidity: existingRecord.turbidity,
+      pacl: editedPacl,
+      test_date: newPayload.test_date || existingRecord.test_date || 'Manual Entry',
+      status: newPayload.status || existingRecord.status || 'Verified',
+      overwrite: true
+    };
+
+    const res = await fetch(API_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatePayload)
+    });
+
+    const result = await res.json();
+    if (!res.ok || !result.success) {
+      throw new Error(result.message || 'Failed to update existing record.');
+    }
+
+    closeDuplicateModal();
+    closeRecordModal();
+
+    showToast(`Record #${existingRecord.id} (pH ${Number(existingRecord.ph).toFixed(2)}, ${Number(existingRecord.turbidity).toFixed(2)} NTU) updated with PACL dosage: ${editedPacl.toFixed(2)} mg/L.`, 'success');
+    await fetchAllForDropdown();
+    await fetchRecords(true);
+  } catch (err) {
+    console.error('Failed to update duplicate record:', err);
+    showToast(`Update failed: ${err.message}`, 'error');
+  } finally {
+    if (elements.confirmDuplicateBtn) elements.confirmDuplicateBtn.disabled = false;
+  }
 }
 
 async function handleRecordFormSubmit(e) {
@@ -508,6 +639,19 @@ async function handleRecordFormSubmit(e) {
   const method = isEdit ? 'PUT' : 'POST';
   if (isEdit) payload.id = parseInt(id, 10);
 
+  // Validate duplicate record: each pH value should have a single turbidity value
+  const existingDup = state.allRecords.find(r =>
+    Math.abs(Number(r.ph) - ph) < 0.001 &&
+    Math.abs(Number(r.turbidity) - turbidity) < 0.001 &&
+    (!isEdit || Number(r.id) !== payload.id)
+  );
+
+  if (existingDup) {
+    // Popup confirmation box to allow editing the result and confirming update
+    openDuplicateModal(existingDup, payload);
+    return;
+  }
+
   if (elements.saveRecordBtn) elements.saveRecordBtn.disabled = true;
 
   try {
@@ -517,6 +661,13 @@ async function handleRecordFormSubmit(e) {
       body: JSON.stringify(payload)
     });
     const result = await res.json();
+
+    // Check if server detected duplicate not present in local state
+    if (!res.ok && res.status === 409 && result.data && result.data.duplicate) {
+      openDuplicateModal(result.data.existing, payload);
+      return;
+    }
+
     if (!res.ok || !result.success) throw new Error(result.message || 'Operation failed on server.');
 
     closeRecordModal();
@@ -535,7 +686,7 @@ async function handleRecordFormSubmit(e) {
    Delete Modal Operations
    ========================================================================== */
 
-window.openDeleteModal = function(id) {
+window.openDeleteModal = function (id) {
   const rec = state.records.find(r => r.id === id);
   if (!rec) return;
 
@@ -590,7 +741,7 @@ async function handleConfirmDelete() {
    Restore / Seed Default Data
    ========================================================================== */
 
-window.restoreBenchmarkData = async function() {
+window.restoreBenchmarkData = async function () {
   const confirmMsg = state.allRecords.length > 0
     ? 'Are you sure you want to restore the original 90 calibrated jar test records into the database?'
     : 'Populate the database with the original 90 calibrated jar test records?';
@@ -702,9 +853,28 @@ function initEventListeners() {
   if (elements.cancelModalBtn) elements.cancelModalBtn.addEventListener('click', closeRecordModal);
   if (elements.recordForm) elements.recordForm.addEventListener('submit', handleRecordFormSubmit);
 
+  if (elements.modalPhInput) elements.modalPhInput.addEventListener('input', checkInputDuplicateNotice);
+  if (elements.modalTurbidityInput) elements.modalTurbidityInput.addEventListener('input', checkInputDuplicateNotice);
+
   if (elements.closeDeleteModalBtn) elements.closeDeleteModalBtn.addEventListener('click', closeDeleteModal);
   if (elements.cancelDeleteBtn) elements.cancelDeleteBtn.addEventListener('click', closeDeleteModal);
   if (elements.confirmDeleteBtn) elements.confirmDeleteBtn.addEventListener('click', handleConfirmDelete);
+
+  // Duplicate Confirmation Modal listeners
+  if (elements.closeDuplicateModalBtn) elements.closeDuplicateModalBtn.addEventListener('click', closeDuplicateModal);
+  if (elements.cancelDuplicateBtn) elements.cancelDuplicateBtn.addEventListener('click', closeDuplicateModal);
+  if (elements.confirmDuplicateBtn) elements.confirmDuplicateBtn.addEventListener('click', handleConfirmDuplicate);
+  if (elements.dupNewPaclInput) {
+    elements.dupNewPaclInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleConfirmDuplicate();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDuplicateModal();
+      }
+    });
+  }
 
   if (elements.restoreBenchmarkBtn) elements.restoreBenchmarkBtn.addEventListener('click', window.restoreBenchmarkData);
   if (elements.refreshBtn) elements.refreshBtn.addEventListener('click', () => {

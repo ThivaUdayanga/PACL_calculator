@@ -200,6 +200,12 @@
             <input type="number" id="modalPaclInput" class="form-control" step="0.01" min="0.01" required
               placeholder="e.g. 0.55">
           </div>
+          <div id="modalDuplicateNotice" class="duplicate-warning hidden"
+            style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: var(--radius-sm); padding: 0.65rem 0.85rem; font-size: 0.82rem; color: var(--accent-amber); margin-bottom: 0.75rem; display: flex; align-items: flex-start; gap: 0.5rem;">
+            <i class="fa-solid fa-triangle-exclamation" style="margin-top: 2px;"></i>
+            <span id="modalDuplicateNoticeText">A record for this pH and Turbidity already exists in the
+              database.</span>
+          </div>
           <!-- <div class="form-group">
             <label for="modalDateInput" class="form-label">Test Date / Reference</label>
             <input type="text" id="modalDateInput" class="form-control"
@@ -248,6 +254,70 @@
         <button type="button" class="btn btn-outline btn-danger-soft" id="confirmDeleteBtn"
           style="background: rgba(244, 63, 94, 0.15); border-color: rgba(244, 63, 94, 0.4); color: var(--accent-rose);">
           <i class="fa-solid fa-trash-can"></i> Delete Permanently
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Duplicate Record Confirmation -->
+  <div class="modal-overlay hidden" id="duplicateModal" style="z-index: 1060;">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <div class="modal-title" style="color: var(--accent-amber);">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <h3>Duplicate Record Detected</h3>
+        </div>
+        <button class="btn-close" id="closeDuplicateModalBtn" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="color: var(--text-secondary); margin-bottom: 0.85rem; font-size: 0.9rem; line-height: 1.45;">
+          A record for this pH and Turbidity already exists in the database. Each pH value must have a single turbidity
+          value.
+        </p>
+
+        <!-- Existing Record Summary Card -->
+        <div
+          style="background: var(--bg-input); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-primary);">
+              <i class="fa-solid fa-database text-cyan"></i> Existing Record</span>
+            </span>
+            <span class="badge badge-primary" id="dupExistingStatus" style="font-size: 0.7rem;">Verified</span>
+          </div>
+          <div
+            style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-secondary);">
+            <div>pH Series: <strong id="dupExistingPh" style="color: var(--text-primary);">--</strong></div>
+            <div>Turbidity: <strong id="dupExistingTurb" style="color: var(--text-primary);">-- NTU</strong></div>
+            <div style="grid-column: span 2; margin-top: 0.2rem;">
+              Current PACL Dosage: <strong id="dupExistingPacl"
+                style="color: var(--accent-amber); font-size: 0.95rem;">-- mg/L</strong>
+            </div>
+            <div style="grid-column: span 2; font-size: 0.75rem; color: var(--text-muted);">
+              Test Date: <span id="dupExistingDate">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Editable Result Form Group -->
+        <div class="form-group" style="margin-bottom: 0.85rem;">
+          <label for="dupNewPaclInput" class="form-label"
+            style="display: flex; justify-content: space-between; align-items: center; font-weight: 600;">
+            <span><i class="fa-solid fa-pen-to-square text-cyan"></i> Edit Result (PACL Dosage mg/L)</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">Update dosage</span>
+          </label>
+          <input type="number" id="dupNewPaclInput" class="form-control" step="0.01" min="0.01" required
+            placeholder="e.g. 0.55" style="border-color: var(--accent-cyan); font-weight: 600; font-size: 1.05rem;">
+        </div>
+
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0; line-height: 1.35;">
+          Click <strong>Okay</strong> to update the existing record with this result, or <strong>Cancel</strong> to
+          return.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="cancelDuplicateBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirmDuplicateBtn">
+          <i class="fa-solid fa-check"></i> Okay
         </button>
       </div>
     </div>

@@ -65,6 +65,41 @@ switch ($method) {
             ], 'Dataset statistics retrieved successfully.');
         }
 
+        // Check for duplicate record existence check
+        if (isset($_GET['action']) && $_GET['action'] === 'check_duplicate') {
+            $ph = isset($_GET['ph']) && is_numeric($_GET['ph']) ? (float)$_GET['ph'] : null;
+            $turbidity = isset($_GET['turbidity']) && is_numeric($_GET['turbidity']) ? (float)$_GET['turbidity'] : null;
+            $excludeId = isset($_GET['exclude_id']) && is_numeric($_GET['exclude_id']) ? (int)$_GET['exclude_id'] : null;
+
+            if ($ph === null || $turbidity === null) {
+                jsonResponse(false, null, 'Valid pH and turbidity values are required to check for duplicates.', 400);
+            }
+
+            $sql = "SELECT * FROM `jar_test_records` WHERE ABS(`ph` - ?) < 0.001 AND ABS(`turbidity` - ?) < 0.001";
+            $params = [$ph, $turbidity];
+            if ($excludeId !== null) {
+                $sql .= " AND `id` != ?";
+                $params[] = $excludeId;
+            }
+            $sql .= " LIMIT 1";
+
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $existing = $stmt->fetch();
+
+            if ($existing) {
+                jsonResponse(true, [
+                    'duplicate' => true,
+                    'existing'  => formatRecord($existing)
+                ], 'Duplicate record found.');
+            } else {
+                jsonResponse(true, [
+                    'duplicate' => false,
+                    'existing'  => null
+                ], 'No duplicate record found.');
+            }
+        }
+
         // Fetch single record by ID
         if (isset($_GET['id'])) {
             $stmt = $pdo->prepare("SELECT * FROM `jar_test_records` WHERE `id` = ?");
@@ -178,6 +213,43 @@ switch ($method) {
             jsonResponse(false, null, 'Missing required fields: ph, turbidity, or pacl must be numeric.', 400);
         }
 
+        // Validate duplicate record: each pH value should have a single turbidity value
+        $checkStmt = $pdo->prepare("
+            SELECT * FROM `jar_test_records`
+            WHERE ABS(`ph` - ?) < 0.001 AND ABS(`turbidity` - ?) < 0.001
+            ORDER BY `id` ASC
+            LIMIT 1
+        ");
+        $checkStmt->execute([$ph, $turbidity]);
+        $existing = $checkStmt->fetch();
+
+        if ($existing) {
+            $allowOverwrite = !empty($payload['overwrite']) || !empty($payload['update_duplicate']);
+            if ($allowOverwrite) {
+                // Update existing record with the new PACL dosage result
+                $stmtUpdate = $pdo->prepare("
+                    UPDATE `jar_test_records`
+                    SET `pacl` = ?,
+                        `test_date` = COALESCE(?, `test_date`),
+                        `status` = COALESCE(?, `status`)
+                    WHERE `id` = ?
+                ");
+                $stmtUpdate->execute([$pacl, $testDate, $status, $existing['id']]);
+
+                $stmtUp = $pdo->prepare("SELECT * FROM `jar_test_records` WHERE `id` = ?");
+                $stmtUp->execute([$existing['id']]);
+                $updatedRecord = $stmtUp->fetch();
+
+                jsonResponse(true, formatRecord($updatedRecord), "Record #{$existing['id']} updated successfully with new PACL dosage result.", 200);
+            } else {
+                // Reject duplicate record creation with 409 Conflict
+                jsonResponse(false, [
+                    'duplicate' => true,
+                    'existing'  => formatRecord($existing)
+                ], "A record with pH {$ph} and Turbidity {$turbidity} NTU already exists (Record #{$existing['id']}).", 409);
+            }
+        }
+
         $stmt = $pdo->prepare("
             INSERT INTO `jar_test_records` (`ph`, `turbidity`, `pacl`, `test_date`, `status`)
             VALUES (?, ?, ?, ?, ?)
@@ -212,6 +284,22 @@ switch ($method) {
 
         if (!$id || $ph === null || $turbidity === null || $pacl === null) {
             jsonResponse(false, null, 'Valid ID, pH, turbidity, and PACL values are required for update.', 400);
+        }
+
+        // Validate duplicate record: ensure another record doesn't already have the same (pH, turbidity)
+        $checkStmt = $pdo->prepare("
+            SELECT * FROM `jar_test_records`
+            WHERE ABS(`ph` - ?) < 0.001 AND ABS(`turbidity` - ?) < 0.001 AND `id` != ?
+            LIMIT 1
+        ");
+        $checkStmt->execute([$ph, $turbidity, $id]);
+        $duplicateOther = $checkStmt->fetch();
+
+        if ($duplicateOther) {
+            jsonResponse(false, [
+                'duplicate' => true,
+                'existing'  => formatRecord($duplicateOther)
+            ], "Cannot update: Another record (#{$duplicateOther['id']}) already exists with pH {$ph} and Turbidity {$turbidity} NTU.", 409);
         }
 
         $stmt = $pdo->prepare("
