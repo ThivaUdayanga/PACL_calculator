@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PACL Records Management Logic
  * Completely connected to MariaDB / MySQL database via api_records.php
  * Handles real-time CRUD operations, statistics dashboard, server-side pagination,
@@ -41,6 +41,7 @@ const elements = {
   addNewRecordBtn: document.getElementById('addNewRecordBtn'),
   restoreBenchmarkBtn: document.getElementById('restoreBenchmarkBtn'),
   refreshBtn: document.getElementById('refreshBtn'),
+  exportExcelBtn: document.getElementById('exportExcelBtn'),
   exportCsvBtn: document.getElementById('exportCsvBtn'),
   paginationBar: document.getElementById('paginationBar'),
 
@@ -766,8 +767,240 @@ window.restoreBenchmarkData = async function () {
 };
 
 /* ==========================================================================
-   CSV Export (uses full allRecords, not just the current page)
+   Excel & CSV Export (Grouped by pH Series)
    ========================================================================== */
+
+async function exportDatasetToExcel() {
+  let source = state.allRecords;
+  if (!source || source.length === 0) {
+    try {
+      showToast('Preparing full dataset for Excel export...', 'info');
+      const res = await fetch(API_BASE);
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        source = json.data;
+        state.allRecords = source;
+      }
+    } catch (err) {
+      console.warn('Could not fetch records for Excel export:', err);
+    }
+  }
+
+  if (!source || source.length === 0) {
+    source = state.records;
+  }
+
+  if (!source || source.length === 0) {
+    showToast('No jar test records available to export.', 'error');
+    return;
+  }
+
+  // Group records by pH value
+  const groups = {};
+  source.forEach(r => {
+    const phNum = Number(r.ph);
+    const phKey = phNum.toFixed(phNum % 1 === 0 ? 1 : 2);
+    if (!groups[phKey]) groups[phKey] = [];
+    groups[phKey].push(r);
+  });
+
+  // Sort pH keys numerically in ascending order
+  const sortedPhKeys = Object.keys(groups).sort((a, b) => parseFloat(a) - parseFloat(b));
+
+  // Build Master Grouped Sheet data
+  const masterSheetData = [
+    ['PACL COAGULANT DOSAGE JAR TEST DATABASE'],
+    ['Empirical Laboratory Calibration Matrix — Grouped by pH Values'],
+    [`Export Date: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} | Total Records: ${source.length} | Calibrated pH Series: ${sortedPhKeys.length}`],
+    []
+  ];
+
+  sortedPhKeys.forEach(phKey => {
+    // Sort records within pH series ascending by turbidity
+    const seriesRecords = groups[phKey].slice().sort((a, b) => Number(a.turbidity) - Number(b.turbidity));
+    const turbValues = seriesRecords.map(r => Number(r.turbidity));
+    const paclValues = seriesRecords.map(r => Number(r.pacl));
+    const minTurb = Math.min(...turbValues).toFixed(2);
+    const maxTurb = Math.max(...turbValues).toFixed(2);
+    const avgPacl = (paclValues.reduce((a, b) => a + b, 0) / paclValues.length).toFixed(2);
+    const minPacl = Math.min(...paclValues).toFixed(2);
+    const maxPacl = Math.max(...paclValues).toFixed(2);
+
+    // Group Header Banner
+    masterSheetData.push([`=== pH ${phKey} SERIES (${seriesRecords.length} Records) ===`, '', '', '', '']);
+    masterSheetData.push(['Record ID', 'pH Series', 'Turbidity (NTU)', 'PACL Dosage (mg/L)', 'Test Date']);
+
+    // Data rows
+    seriesRecords.forEach(r => {
+      masterSheetData.push([
+        r.id,
+        Number(r.ph),
+        Number(r.turbidity),
+        Number(r.pacl),
+        formatDateOnly(r.created_at || r.test_date),
+        // r.status || 'Verified'
+      ]);
+    });
+
+    // Subtotal summary row for this pH series
+    masterSheetData.push([
+      `pH ${phKey} Summary`,
+      `Count: ${seriesRecords.length}`,
+      `Turbidity: ${minTurb} - ${maxTurb} NTU`,
+      `Avg PACL: ${avgPacl} mg/L (Range: ${minPacl} - ${maxPacl})`,
+      // 'Verified Series',
+      ''
+    ]);
+    masterSheetData.push([]); // blank separator row
+  });
+
+  const exportFilename = `PACL_Jar_Test_Matrix_Grouped_pH_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+  if (typeof XLSX !== 'undefined') {
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // Master sheet
+      const wsMaster = XLSX.utils.aoa_to_sheet(masterSheetData);
+      wsMaster['!cols'] = [
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 22 },
+        { wch: 26 },
+        { wch: 18 },
+        { wch: 16 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsMaster, 'All Records (Grouped)');
+
+      // Individual tab for each pH series
+      sortedPhKeys.forEach(phKey => {
+        const seriesRecords = groups[phKey].slice().sort((a, b) => Number(a.turbidity) - Number(b.turbidity));
+        const sheetRows = [
+          [`PACL Jar Test Matrix — pH ${phKey} Series`],
+          [`Total Points: ${seriesRecords.length}`],
+          [],
+          ['Record ID', 'pH Series', 'Turbidity (NTU)', 'PACL Dosage (mg/L)', 'Test Date']
+        ];
+
+        seriesRecords.forEach(r => {
+          sheetRows.push([
+            r.id,
+            Number(r.ph),
+            Number(r.turbidity),
+            Number(r.pacl),
+            formatDateOnly(r.created_at || r.test_date),
+            // r.status || 'Verified'
+          ]);
+        });
+
+        const wsSeries = XLSX.utils.aoa_to_sheet(sheetRows);
+        wsSeries['!cols'] = [
+          { wch: 14 },
+          { wch: 12 },
+          { wch: 20 },
+          { wch: 22 },
+          { wch: 16 },
+          { wch: 14 }
+        ];
+
+        const safeSheetName = `pH ${phKey}`.replace(/[:\\/?*\[\]]/g, '').slice(0, 31);
+        XLSX.utils.book_append_sheet(wb, wsSeries, safeSheetName);
+      });
+
+      XLSX.writeFile(wb, exportFilename);
+      showToast(`Exported ${source.length} records grouped by pH to Excel (.xlsx)!`, 'success');
+      return;
+    } catch (xlsxErr) {
+      console.warn('SheetJS export error, using fallback:', xlsxErr);
+    }
+  }
+
+  // Fallback XML Spreadsheet format (.xls) natively supported by Excel
+  exportFallbackXmlSpreadsheet(groups, sortedPhKeys, source.length, exportFilename);
+  showToast(`Exported ${source.length} records grouped by pH to Excel (.xls).`, 'success');
+}
+
+function exportFallbackXmlSpreadsheet(groups, sortedPhKeys, totalCount, filename) {
+  let xml = '<?xml version="1.0"?>\n';
+  xml += '<?mso-application progid="Excel.Sheet"?>\n';
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
+  xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n';
+  xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n';
+  xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
+  xml += ' xmlns:html="http://www.w3.org/TR/REC-html40">\n';
+  xml += ' <Styles>\n';
+  xml += '  <Style ss:ID="Default" ss:Name="Normal"><Font ss:FontName="Calibri" ss:Size="11"/></Style>\n';
+  xml += '  <Style ss:ID="Header"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#0F172A" ss:Pattern="Solid"/></Style>\n';
+  xml += '  <Style ss:ID="GroupBanner"><Font ss:FontName="Calibri" ss:Size="12" ss:Bold="1" ss:Color="#0F172A"/><Interior ss:Color="#E2E8F0" ss:Pattern="Solid"/></Style>\n';
+  xml += '  <Style ss:ID="Summary"><Font ss:FontName="Calibri" ss:Size="10" ss:Italic="1" ss:Bold="1" ss:Color="#475569"/><Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/></Style>\n';
+  xml += ' </Styles>\n';
+
+  // Master Grouped Sheet
+  xml += ' <Worksheet ss:Name="All Records (Grouped)">\n';
+  xml += '  <Table>\n';
+  xml += '   <Column ss:Width="90"/>\n<Column ss:Width="70"/>\n<Column ss:Width="110"/>\n<Column ss:Width="130"/>\n<Column ss:Width="100"/>\n<Column ss:Width="90"/>\n';
+  xml += '   <Row><Cell><Data ss:Type="String">PACL COAGULANT JAR TEST DATABASE - GROUPED BY pH</Data></Cell></Row>\n';
+  xml += `   <Row><Cell><Data ss:Type="String">Total Records: ${totalCount} | Calibrated pH Series: ${sortedPhKeys.length}</Data></Cell></Row>\n`;
+  xml += '   <Row></Row>\n';
+
+  sortedPhKeys.forEach(phKey => {
+    const list = groups[phKey].slice().sort((a, b) => Number(a.turbidity) - Number(b.turbidity));
+    const avgPacl = (list.reduce((acc, r) => acc + Number(r.pacl), 0) / list.length).toFixed(2);
+    xml += `   <Row><Cell ss:StyleID="GroupBanner"><Data ss:Type="String">pH ${phKey} Series (${list.length} records)</Data></Cell></Row>\n`;
+    xml += '   <Row ss:StyleID="Header">';
+    ['Record ID', 'pH Series', 'Turbidity (NTU)', 'PACL Dosage (mg/L)', 'Test Date', 'Status'].forEach(h => {
+      xml += `<Cell><Data ss:Type="String">${h}</Data></Cell>`;
+    });
+    xml += '</Row>\n';
+
+    list.forEach(r => {
+      xml += `   <Row><Cell><Data ss:Type="Number">${r.id}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.ph)}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.turbidity)}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.pacl)}</Data></Cell><Cell><Data ss:Type="String">${escapeXml(formatDateOnly(r.created_at || r.test_date))}</Data></Cell><Cell><Data ss:Type="String">${escapeXml(r.status || 'Verified')}</Data></Cell></Row>\n`;
+    });
+
+    xml += `   <Row ss:StyleID="Summary"><Cell><Data ss:Type="String">Subtotal pH ${phKey}</Data></Cell><Cell><Data ss:Type="String">Count: ${list.length}</Data></Cell><Cell><Data ss:Type="String"></Data></Cell><Cell><Data ss:Type="String">Avg PACL: ${avgPacl} mg/L</Data></Cell><Cell><Data ss:Type="String"></Data></Cell><Cell><Data ss:Type="String"></Data></Cell></Row>\n`;
+    xml += '   <Row></Row>\n';
+  });
+
+  xml += '  </Table>\n </Worksheet>\n';
+
+  // Individual tabs
+  sortedPhKeys.forEach(phKey => {
+    const list = groups[phKey].slice().sort((a, b) => Number(a.turbidity) - Number(b.turbidity));
+    xml += ` <Worksheet ss:Name="pH ${phKey}">\n  <Table>\n`;
+    xml += '   <Column ss:Width="80"/>\n<Column ss:Width="60"/>\n<Column ss:Width="100"/>\n<Column ss:Width="120"/>\n<Column ss:Width="90"/>\n<Column ss:Width="80"/>\n';
+    xml += `   <Row><Cell><Data ss:Type="String">Jar Test Calibration Matrix - pH ${phKey}</Data></Cell></Row>\n   <Row></Row>\n`;
+    xml += '   <Row ss:StyleID="Header">';
+    ['Record ID', 'pH Series', 'Turbidity (NTU)', 'PACL Dosage (mg/L)', 'Test Date', 'Status'].forEach(h => {
+      xml += `<Cell><Data ss:Type="String">${h}</Data></Cell>`;
+    });
+    xml += '</Row>\n';
+    list.forEach(r => {
+      xml += `   <Row><Cell><Data ss:Type="Number">${r.id}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.ph)}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.turbidity)}</Data></Cell><Cell><Data ss:Type="Number">${Number(r.pacl)}</Data></Cell><Cell><Data ss:Type="String">${escapeXml(formatDateOnly(r.created_at || r.test_date))}</Data></Cell><Cell><Data ss:Type="String">${escapeXml(r.status || 'Verified')}</Data></Cell></Row>\n`;
+    });
+    xml += '  </Table>\n </Worksheet>\n';
+  });
+
+  xml += '</Workbook>';
+
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.replace(/\.xlsx$/i, '.xls');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function escapeXml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
 function exportDatasetToCsv() {
   const source = state.allRecords.length > 0 ? state.allRecords : state.records;
@@ -776,22 +1009,49 @@ function exportDatasetToCsv() {
     return;
   }
 
-  const headers = ['ID', 'pH', 'Turbidity_NTU', 'PACL_mgL', 'Test_Date'];
-  const rows = source.map(r => [
-    r.id, r.ph, r.turbidity, r.pacl,
-    `"${formatDateOnly(r.created_at || r.test_date)}"`
-  ]);
+  // Group by pH
+  const groups = {};
+  source.forEach(r => {
+    const phNum = Number(r.ph);
+    const phKey = phNum.toFixed(phNum % 1 === 0 ? 1 : 2);
+    if (!groups[phKey]) groups[phKey] = [];
+    groups[phKey].push(r);
+  });
 
-  const csvContent = 'data:text/csv;charset=utf-8,'
-    + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+  const sortedPhKeys = Object.keys(groups).sort((a, b) => parseFloat(a) - parseFloat(b));
+  const csvLines = [];
 
+  csvLines.push('PACL JAR TEST DATABASE — GROUPED BY pH VALUES');
+  csvLines.push(`Export Date: ${new Date().toISOString().slice(0, 10)},Total Records: ${source.length},pH Series Count: ${sortedPhKeys.length}`);
+  csvLines.push('');
+
+  sortedPhKeys.forEach(phKey => {
+    const list = groups[phKey].slice().sort((a, b) => Number(a.turbidity) - Number(b.turbidity));
+    const avgPacl = (list.reduce((acc, r) => acc + Number(r.pacl), 0) / list.length).toFixed(2);
+    csvLines.push(`"# --- pH ${phKey} Series (${list.length} records) ---"`);
+    csvLines.push('ID,pH,Turbidity_NTU,PACL_mgL,Test_Date,Status');
+    list.forEach(r => {
+      csvLines.push([
+        r.id,
+        r.ph,
+        r.turbidity,
+        r.pacl,
+        `"${formatDateOnly(r.created_at || r.test_date)}"`,
+        `"${r.status || 'Verified'}"`
+      ].join(','));
+    });
+    csvLines.push(`"Summary pH ${phKey}",Count: ${list.length},,"Avg PACL: ${avgPacl} mg/L",,`);
+    csvLines.push('');
+  });
+
+  const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csvLines.join('\n'));
   const link = document.createElement('a');
-  link.setAttribute('href', encodeURI(csvContent));
-  link.setAttribute('download', `PACL_Jar_Test_Database_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute('href', csvContent);
+  link.setAttribute('download', `PACL_Jar_Test_Database_Grouped_pH_${new Date().toISOString().slice(0, 10)}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast(`Exported ${source.length} database records to CSV.`, 'success');
+  showToast(`Exported ${source.length} database records grouped by pH to CSV.`, 'success');
 }
 
 /* ==========================================================================
@@ -883,6 +1143,7 @@ function initEventListeners() {
     fetchRecords();
     showToast('Refreshing records from database...', 'info');
   });
+  if (elements.exportExcelBtn) elements.exportExcelBtn.addEventListener('click', exportDatasetToExcel);
   if (elements.exportCsvBtn) elements.exportCsvBtn.addEventListener('click', exportDatasetToCsv);
 }
 

@@ -129,16 +129,13 @@
             <button id="addNewRecordBtn" class="btn btn-sm btn-primary">
               <i class="fa-solid fa-plus"></i> Add Record
             </button>
-            <!-- <button id="restoreBenchmarkBtn" class="btn btn-sm btn-outline"
-              title="Restore Original 90 Jar Test Lab Records">
-              <i class="fa-solid fa-rotate-left"></i> Restore Benchmark
-            </button> -->
-            <!-- <button id="refreshBtn" class="btn btn-sm btn-outline" title="Refresh records from Database">
-              <i class="fa-solid fa-arrows-rotate"></i>
-            </button> -->
-            <button id="exportCsvBtn" class="btn btn-sm btn-outline" title="Export database to CSV">
-              <i class="fa-solid fa-file-csv"></i> Export CSV
+            <button id="exportExcelBtn" class="btn btn-sm btn-outline"
+              title="Export jar test database to Excel (.xlsx) grouped by pH values">
+              <i class="fa-solid fa-file-excel text-emerald"></i> Export Excel
             </button>
+            <!-- <button id="exportCsvBtn" class="btn btn-sm btn-outline" title="Export database to CSV">
+              <i class="fa-solid fa-file-csv"></i> Export CSV
+            </button> -->
           </div>
         </div>
 
@@ -325,6 +322,14 @@
 
   <!-- Notification Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Excel (.xlsx) Export Engine (Local with CDN fallback) -->
+  <script src="xlsx.full.min.js"></script>
+  <script>
+    if (typeof XLSX === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"><\/script>');
+    }
+  </script>
 
   <!-- Scripts: Database-driven (No hardcoded data.js) -->
   <script src="records.js"></script>
