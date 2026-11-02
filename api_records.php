@@ -76,16 +76,66 @@ switch ($method) {
                 jsonResponse(false, null, 'Record not found.', 404);
             }
         } else {
-            // Optional filter by ph
-            if (isset($_GET['ph']) && is_numeric($_GET['ph'])) {
-                $stmt = $pdo->prepare("SELECT * FROM `jar_test_records` WHERE ABS(`ph` - ?) < 0.001 ORDER BY `turbidity` ASC");
-                $stmt->execute([(float)$_GET['ph']]);
-            } else {
-                $stmt = $pdo->query("SELECT * FROM `jar_test_records` ORDER BY `ph` ASC, `turbidity` ASC");
+            // --- Server-side pagination with optional search/series filter ---
+            $page  = isset($_GET['page'])  && is_numeric($_GET['page'])  ? max(1, (int)$_GET['page'])  : null;
+            $limit = isset($_GET['limit']) && is_numeric($_GET['limit']) ? max(1, (int)$_GET['limit']) : null;
+            $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+            $series = isset($_GET['series']) && is_numeric($_GET['series']) ? (float)$_GET['series'] : null;
+            // Legacy single-ph filter support
+            if ($series === null && isset($_GET['ph']) && is_numeric($_GET['ph'])) {
+                $series = (float)$_GET['ph'];
             }
-            $records = $stmt->fetchAll();
-            $formatted = array_map('formatRecord', $records);
-            jsonResponse(true, $formatted, 'Records retrieved successfully.');
+
+            // Build WHERE clause
+            $where  = [];
+            $params = [];
+            if ($series !== null) {
+                $where[]  = 'ABS(`ph` - ?) < 0.001';
+                $params[] = $series;
+            }
+            if ($search !== '') {
+                $like     = '%' . $search . '%';
+                $where[]  = '(CAST(`ph` AS CHAR) LIKE ? OR CAST(`turbidity` AS CHAR) LIKE ? OR CAST(`pacl` AS CHAR) LIKE ? OR DATE(`created_at`) LIKE ? OR CAST(`id` AS CHAR) LIKE ?)';
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+            }
+
+            $whereSql = count($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+
+            // Count total matching rows
+            $countStmt = $pdo->prepare("SELECT COUNT(*) FROM `jar_test_records` $whereSql");
+            $countStmt->execute($params);
+            $total = (int)$countStmt->fetchColumn();
+
+            // If pagination requested
+            if ($page !== null && $limit !== null) {
+                $totalPages = max(1, (int)ceil($total / $limit));
+                $page       = min($page, $totalPages);
+                $offset     = ($page - 1) * $limit;
+
+                $dataStmt = $pdo->prepare("SELECT * FROM `jar_test_records` $whereSql ORDER BY `ph` ASC, `turbidity` ASC LIMIT ? OFFSET ?");
+                $dataStmt->execute(array_merge($params, [$limit, $offset]));
+                $records   = $dataStmt->fetchAll();
+                $formatted = array_map('formatRecord', $records);
+
+                jsonResponse(true, [
+                    'records'     => $formatted,
+                    'total'       => $total,
+                    'page'        => $page,
+                    'limit'       => $limit,
+                    'total_pages' => $totalPages,
+                ], 'Records retrieved successfully (paginated).');
+            } else {
+                // No pagination: return all (backwards-compat for app.js interpolation)
+                $dataStmt = $pdo->prepare("SELECT * FROM `jar_test_records` $whereSql ORDER BY `ph` ASC, `turbidity` ASC");
+                $dataStmt->execute($params);
+                $records   = $dataStmt->fetchAll();
+                $formatted = array_map('formatRecord', $records);
+                jsonResponse(true, $formatted, 'Records retrieved successfully.');
+            }
         }
         break;
 

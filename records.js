@@ -1,21 +1,30 @@
-/**
+﻿/**
  * PACL Records Management Logic
  * Completely connected to MariaDB / MySQL database via api_records.php
- * Handles real-time CRUD operations, statistics dashboard, filtering, sorting, and CSV export.
+ * Handles real-time CRUD operations, statistics dashboard, server-side pagination,
+ * filtering, sorting, and CSV export.
  */
 
 const API_BASE = 'api_records.php';
 const THEME_KEY = 'pacl_theme_pref';
+const PAGE_SIZE = 10;
 
 const state = {
-  records: [],
+  records: [],         // records on the current page
+  allRecords: [],      // full list — used for CSV export & series dropdown
   stats: null,
   tableSort: { key: 'ph', asc: true },
   tableFilter: '',
   seriesFilter: 'all',
   pendingDeleteRecord: null,
   theme: 'dark',
-  isLoading: false
+  isLoading: false,
+  pagination: {
+    page: 1,
+    total: 0,
+    totalPages: 1,
+    limit: PAGE_SIZE
+  }
 };
 
 const elements = {
@@ -32,6 +41,7 @@ const elements = {
   restoreBenchmarkBtn: document.getElementById('restoreBenchmarkBtn'),
   refreshBtn: document.getElementById('refreshBtn'),
   exportCsvBtn: document.getElementById('exportCsvBtn'),
+  paginationBar: document.getElementById('paginationBar'),
 
   // Stats elements
   statTotalRecords: document.getElementById('statTotalRecords'),
@@ -73,9 +83,9 @@ const elements = {
 document.addEventListener('DOMContentLoaded', () => {
   loadThemePreference();
   initEventListeners();
+  fetchAllForDropdown();
   fetchRecords();
 
-  // If redirected with ?action=add, automatically open the add modal
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('action') === 'add') {
     openAddModal();
@@ -117,8 +127,33 @@ function toggleTheme() {
 }
 
 /* ==========================================================================
-   Database Operations (API Fetch, Create, Update, Delete)
+   Database Operations — Server-Side Paginated Fetch
    ========================================================================== */
+
+function buildPageUrl(page) {
+  const params = new URLSearchParams({
+    page:  page,
+    limit: state.pagination.limit
+  });
+  if (state.tableFilter) params.set('search', state.tableFilter);
+  if (state.seriesFilter !== 'all') params.set('series', state.seriesFilter);
+  return `${API_BASE}?${params.toString()}`;
+}
+
+async function fetchAllForDropdown() {
+  try {
+    const res = await fetch(API_BASE);
+    if (!res.ok) return;
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      state.allRecords = json.data;
+      populateSeriesDropdown();
+      fetchStats();
+    }
+  } catch (err) {
+    console.warn('Could not pre-load all records for dropdown:', err);
+  }
+}
 
 async function fetchRecords(silent = false) {
   state.isLoading = true;
@@ -130,19 +165,43 @@ async function fetchRecords(silent = false) {
         </td>
       </tr>
     `;
+    if (elements.paginationBar) elements.paginationBar.innerHTML = '';
   }
 
   try {
-    const res = await fetch(API_BASE);
+    const url = buildPageUrl(state.pagination.page);
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to reach database`);
     const json = await res.json();
 
-    if (json.success && Array.isArray(json.data)) {
-      state.records = json.data;
-      updateDbStatus(true, `${state.records.length} Records Connected`);
-      populateSeriesDropdown();
+    if (json.success && json.data) {
+      const data = json.data;
+      if (data.records !== undefined) {
+        state.records = data.records;
+        state.pagination.total      = data.total;
+        state.pagination.page       = data.page;
+        state.pagination.totalPages = data.total_pages;
+        state.pagination.limit      = data.limit;
+
+        const start = (state.pagination.page - 1) * state.pagination.limit + 1;
+        const end   = start + state.records.length - 1;
+        updateDbStatus(true, `${data.total} Records Connected`);
+        if (elements.tableCountBadge) {
+          elements.tableCountBadge.textContent =
+            data.total === 0 ? '0 records' : `${start}–${end} of ${data.total} records`;
+        }
+      } else if (Array.isArray(data)) {
+        state.records = data;
+        state.pagination.total      = data.length;
+        state.pagination.totalPages = 1;
+        updateDbStatus(true, `${data.length} Records Connected`);
+        if (elements.tableCountBadge) {
+          elements.tableCountBadge.textContent = `${data.length} records`;
+        }
+      }
+
       renderTable();
-      fetchStats();
+      renderPagination();
     } else {
       throw new Error(json.message || 'Unknown database error');
     }
@@ -152,7 +211,7 @@ async function fetchRecords(silent = false) {
     if (elements.tableBody) {
       elements.tableBody.innerHTML = `
         <tr>
-          <td colspan="7" style="text-align: center; padding: 3rem 1.5rem; color: var(--accent-rose);">
+          <td colspan="6" style="text-align: center; padding: 3rem 1.5rem; color: var(--accent-rose);">
             <i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; margin-bottom: 0.75rem; display: block;"></i>
             <strong>Unable to connect to the database.</strong><br>
             <span style="font-size: 0.85rem; color: var(--text-muted);">${err.message}</span>
@@ -186,9 +245,8 @@ async function fetchStats() {
       if (elements.statPaclRange) elements.statPaclRange.textContent = `${stats.min_pacl.toFixed(2)} - ${stats.max_pacl.toFixed(2)} mg/L`;
       if (elements.statAvgPacl) elements.statAvgPacl.textContent = `Average: ${stats.avg_pacl.toFixed(2)} mg/L`;
 
-      // Update pH range subtitle
-      if (elements.statPhRange && state.records.length > 0) {
-        const phs = state.records.map(r => r.ph);
+      if (elements.statPhRange && state.allRecords.length > 0) {
+        const phs = state.allRecords.map(r => r.ph);
         const minPh = Math.min(...phs);
         const maxPh = Math.max(...phs);
         elements.statPhRange.textContent = `pH ${minPh.toFixed(1)} to pH ${maxPh.toFixed(1)}`;
@@ -219,11 +277,11 @@ function updateDbStatus(isConnected, text) {
 function populateSeriesDropdown() {
   if (!elements.seriesFilter) return;
   const currentVal = elements.seriesFilter.value;
-  const uniquePhs = Array.from(new Set(state.records.map(r => Number(r.ph)))).sort((a, b) => a - b);
+  const uniquePhs = Array.from(new Set(state.allRecords.map(r => Number(r.ph)))).sort((a, b) => a - b);
 
   elements.seriesFilter.innerHTML = '<option value="all">All pH Series</option>';
   uniquePhs.forEach(ph => {
-    const count = state.records.filter(r => Math.abs(r.ph - ph) < 0.001).length;
+    const count = state.allRecords.filter(r => Math.abs(r.ph - ph) < 0.001).length;
     const opt = document.createElement('option');
     opt.value = ph;
     opt.textContent = `pH ${ph.toFixed(ph % 1 === 0 ? 1 : 2)} (${count} records)`;
@@ -236,43 +294,17 @@ function populateSeriesDropdown() {
 }
 
 /* ==========================================================================
-   Table Rendering, Filtering, Sorting
+   Table Rendering (client-side sort on current page slice)
    ========================================================================== */
 
 function renderTable() {
   if (!elements.tableBody) return;
-  const searchTerm = state.tableFilter.toLowerCase().trim();
-  const selectedSeries = state.seriesFilter;
 
-  let filtered = state.records.filter(item => {
-    // 1. Series dropdown filter
-    if (selectedSeries !== 'all') {
-      if (Math.abs(Number(item.ph) - Number(selectedSeries)) > 0.001) {
-        return false;
-      }
-    }
-
-    // 2. Text search filter
-    if (searchTerm) {
-      const phMatch = `ph ${item.ph}`.toLowerCase().includes(searchTerm) || `${item.ph}`.includes(searchTerm);
-      const turbMatch = `${item.turbidity}`.includes(searchTerm);
-      const paclMatch = `${item.pacl}`.includes(searchTerm);
-      const dateMatch = (formatDateOnly(item.created_at || item.test_date)).toLowerCase().includes(searchTerm);
-      const idMatch = `#${item.id}`.includes(searchTerm) || `${item.id}` === searchTerm;
-      if (!phMatch && !turbMatch && !paclMatch && !dateMatch && !idMatch) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  // Sort
   const { key, asc } = state.tableSort;
-  filtered.sort((a, b) => {
+  const sorted = [...state.records].sort((a, b) => {
     let valA = a[key];
     let valB = b[key];
-    if (key === 'id' || key === 'ph' || key === 'turbidity' || key === 'pacl') {
+    if (['id', 'ph', 'turbidity', 'pacl'].includes(key)) {
       valA = Number(valA);
       valB = Number(valB);
     } else {
@@ -284,27 +316,21 @@ function renderTable() {
     return 0;
   });
 
-  // Update badge count
-  if (elements.tableCountBadge) {
-    elements.tableCountBadge.textContent = `${filtered.length} of ${state.records.length} records`;
-  }
-
   elements.tableBody.innerHTML = '';
 
-  if (filtered.length === 0) {
+  if (sorted.length === 0) {
     elements.tableBody.innerHTML = `
       <tr>
         <td colspan="6" style="text-align: center; padding: 3rem 1.5rem; color: var(--text-muted);">
           <i class="fa-solid fa-circle-question" style="font-size: 2rem; margin-bottom: 0.75rem; display: block; opacity: 0.5;"></i>
           No jar test records matched your filter.
-          ${state.records.length === 0 ? '<div style="margin-top: 1rem;"><button class="btn btn-sm btn-primary" onclick="restoreBenchmarkData()"><i class="fa-solid fa-rotate-left"></i> Restore Benchmark Dataset</button></div>' : ''}
         </td>
       </tr>
     `;
     return;
   }
 
-  filtered.forEach(rec => {
+  sorted.forEach(rec => {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="color: var(--text-muted); font-family: var(--font-mono); font-size: 0.8rem;">#${rec.id}</td>
@@ -328,17 +354,83 @@ function renderTable() {
   });
 }
 
+/* ==========================================================================
+   Pagination Rendering
+   ========================================================================== */
+
+function renderPagination() {
+  const bar = elements.paginationBar;
+  if (!bar) return;
+
+  const { page, totalPages, total, limit } = state.pagination;
+
+  if (totalPages <= 1 && total <= limit) {
+    bar.innerHTML = '';
+    return;
+  }
+
+  const WINDOW = 2;
+  const pages = [];
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === 1 || p === totalPages || (p >= page - WINDOW && p <= page + WINDOW)) {
+      pages.push(p);
+    }
+  }
+
+  const pagesWithGaps = [];
+  let prev = 0;
+  for (const p of pages) {
+    if (prev && p - prev > 1) pagesWithGaps.push('...');
+    pagesWithGaps.push(p);
+    prev = p;
+  }
+
+  const makeBtn = (label, targetPage, isActive = false, isDisabled = false, title = '') => {
+    const cls = ['page-btn', isActive ? 'active' : '', isDisabled ? 'disabled' : ''].filter(Boolean).join(' ');
+    const click = (!isDisabled && targetPage) ? `onclick="goToPage(${targetPage})"` : '';
+    return `<button class="${cls}" ${click} ${isDisabled ? 'disabled' : ''} title="${title}">${label}</button>`;
+  };
+
+  const start = (page - 1) * limit + 1;
+  const end   = Math.min(page * limit, total);
+
+  let html = '<div class="pagination-controls">';
+  html += `<span class="pagination-info">Showing ${start}–${end} of <strong>${total}</strong> records</span>`;
+  html += '<div class="page-buttons">';
+  html += makeBtn('<i class="fa-solid fa-angles-left"></i>', 1, false, page === 1, 'First page');
+  html += makeBtn('<i class="fa-solid fa-angle-left"></i>', page - 1, false, page === 1, 'Previous page');
+
+  pagesWithGaps.forEach(p => {
+    if (p === '...') {
+      html += `<span class="page-ellipsis">…</span>`;
+    } else {
+      html += makeBtn(p, p, p === page, false, `Page ${p}`);
+    }
+  });
+
+  html += makeBtn('<i class="fa-solid fa-angle-right"></i>', page + 1, false, page === totalPages, 'Next page');
+  html += makeBtn('<i class="fa-solid fa-angles-right"></i>', totalPages, false, page === totalPages, 'Last page');
+  html += '</div></div>';
+
+  bar.innerHTML = html;
+}
+
+window.goToPage = function(p) {
+  const { totalPages } = state.pagination;
+  p = Math.max(1, Math.min(p, totalPages));
+  if (p === state.pagination.page) return;
+  state.pagination.page = p;
+  fetchRecords(true);
+  const tableCard = document.querySelector('.table-card');
+  if (tableCard) tableCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
 function formatDateOnly(dateStr) {
   if (!dateStr) return '—';
-  // If formatted as "YYYY-MM-DD HH:MM:SS" or ISO string, extract date portion
   const datePart = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.split(' ')[0];
-  if (datePart && /^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
-    return datePart;
-  }
+  if (datePart && /^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
   const d = new Date(dateStr);
-  if (!isNaN(d.getTime())) {
-    return d.toISOString().split('T')[0];
-  }
+  if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
   return dateStr;
 }
 
@@ -355,7 +447,6 @@ function escapeHtml(str) {
    ========================================================================== */
 
 window.applyRecordToCalculator = function(phVal, turbVal) {
-  // Redirect to index.html with query parameters so the calculator opens with these values
   window.location.href = `index.html?ph=${encodeURIComponent(phVal)}&turbidity=${encodeURIComponent(turbVal)}`;
 };
 
@@ -372,7 +463,6 @@ function openAddModal() {
   if (elements.modalDateInput) elements.modalDateInput.value = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   if (elements.modalStatusInput) elements.modalStatusInput.value = 'Verified';
   if (elements.saveBtnText) elements.saveBtnText.textContent = 'Save Record';
-
   if (elements.recordModal) elements.recordModal.classList.remove('hidden');
 }
 
@@ -391,7 +481,6 @@ window.openEditModal = function(id) {
   if (elements.modalDateInput) elements.modalDateInput.value = rec.test_date || '';
   if (elements.modalStatusInput) elements.modalStatusInput.value = rec.status || 'Verified';
   if (elements.saveBtnText) elements.saveBtnText.textContent = 'Update Record';
-
   if (elements.recordModal) elements.recordModal.classList.remove('hidden');
 };
 
@@ -414,37 +503,25 @@ async function handleRecordFormSubmit(e) {
     return;
   }
 
-  const payload = {
-    ph,
-    turbidity,
-    pacl,
-    test_date,
-    status
-  };
-
+  const payload = { ph, turbidity, pacl, test_date, status };
   const isEdit = Boolean(id);
   const method = isEdit ? 'PUT' : 'POST';
   if (isEdit) payload.id = parseInt(id, 10);
 
-  // Disable save button while submitting
   if (elements.saveRecordBtn) elements.saveRecordBtn.disabled = true;
 
   try {
     const res = await fetch(API_BASE, {
-      method: method,
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      method,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
     const result = await res.json();
-    if (!res.ok || !result.success) {
-      throw new Error(result.message || 'Operation failed on server.');
-    }
+    if (!res.ok || !result.success) throw new Error(result.message || 'Operation failed on server.');
 
     closeRecordModal();
-    showToast(isEdit ? `Record #${id} updated successfully.` : `New record (pH ${ph}, ${turbidity} NTU) added to database.`, 'success');
+    showToast(isEdit ? `Record #${id} updated successfully.` : `New record (pH ${ph}, ${turbidity} NTU) added.`, 'success');
+    await fetchAllForDropdown();
     await fetchRecords(true);
   } catch (err) {
     console.error('Failed to save record:', err);
@@ -487,19 +564,19 @@ async function handleConfirmDelete() {
   try {
     const res = await fetch(API_BASE, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id })
     });
-
     const result = await res.json();
-    if (!res.ok || !result.success) {
-      throw new Error(result.message || 'Failed to delete record.');
-    }
+    if (!res.ok || !result.success) throw new Error(result.message || 'Failed to delete record.');
 
     closeDeleteModal();
     showToast(`Record #${id} (pH ${ph}, ${turbidity} NTU) deleted.`, 'info');
+
+    if (state.records.length === 1 && state.pagination.page > 1) {
+      state.pagination.page--;
+    }
+    await fetchAllForDropdown();
     await fetchRecords(true);
   } catch (err) {
     console.error('Failed to delete record:', err);
@@ -514,20 +591,19 @@ async function handleConfirmDelete() {
    ========================================================================== */
 
 window.restoreBenchmarkData = async function() {
-  const confirmMsg = state.records.length > 0
-    ? 'Are you sure you want to restore the original 90 calibrated jar test records into the database? This will overwrite / re-seed the standard dataset.'
+  const confirmMsg = state.allRecords.length > 0
+    ? 'Are you sure you want to restore the original 90 calibrated jar test records into the database?'
     : 'Populate the database with the original 90 calibrated jar test records?';
-
   if (!confirm(confirmMsg)) return;
 
   try {
     showToast('Restoring benchmark jar test records into database...', 'info');
-    const res = await fetch(`${API_BASE}?action=seed&force=1`, {
-      method: 'POST'
-    });
+    const res = await fetch(`${API_BASE}?action=seed&force=1`, { method: 'POST' });
     const result = await res.json();
     if (result.success) {
-      showToast('Successfully restored 90 jar test calibration records into database!', 'success');
+      showToast('Successfully restored 90 jar test calibration records!', 'success');
+      state.pagination.page = 1;
+      await fetchAllForDropdown();
       await fetchRecords();
     } else {
       throw new Error(result.message || 'Seed operation failed');
@@ -539,35 +615,32 @@ window.restoreBenchmarkData = async function() {
 };
 
 /* ==========================================================================
-   CSV Export
+   CSV Export (uses full allRecords, not just the current page)
    ========================================================================== */
 
 function exportDatasetToCsv() {
-  if (state.records.length === 0) {
+  const source = state.allRecords.length > 0 ? state.allRecords : state.records;
+  if (source.length === 0) {
     showToast('No records available to export.', 'error');
     return;
   }
 
   const headers = ['ID', 'pH', 'Turbidity_NTU', 'PACL_mgL', 'Test_Date'];
-  const rows = state.records.map(r => [
-    r.id,
-    r.ph,
-    r.turbidity,
-    r.pacl,
+  const rows = source.map(r => [
+    r.id, r.ph, r.turbidity, r.pacl,
     `"${formatDateOnly(r.created_at || r.test_date)}"`
   ]);
 
-  const csvContent = 'data:text/csv;charset=utf-8,' 
+  const csvContent = 'data:text/csv;charset=utf-8,'
     + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
 
-  const encodedUri = encodeURI(csvContent);
   const link = document.createElement('a');
-  link.setAttribute('href', encodedUri);
+  link.setAttribute('href', encodeURI(csvContent));
   link.setAttribute('download', `PACL_Jar_Test_Database_${new Date().toISOString().slice(0, 10)}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  showToast(`Exported ${state.records.length} database records to CSV.`, 'success');
+  showToast(`Exported ${source.length} database records to CSV.`, 'success');
 }
 
 /* ==========================================================================
@@ -583,7 +656,8 @@ function initEventListeners() {
       if (elements.clearSearchBtn) {
         elements.clearSearchBtn.classList.toggle('hidden', !e.target.value);
       }
-      renderTable();
+      state.pagination.page = 1;
+      fetchRecords(true);
     });
   }
 
@@ -595,14 +669,16 @@ function initEventListeners() {
       }
       elements.clearSearchBtn.classList.add('hidden');
       state.tableFilter = '';
-      renderTable();
+      state.pagination.page = 1;
+      fetchRecords(true);
     });
   }
 
   if (elements.seriesFilter) {
     elements.seriesFilter.addEventListener('change', (e) => {
       state.seriesFilter = e.target.value;
-      renderTable();
+      state.pagination.page = 1;
+      fetchRecords(true);
     });
   }
 
@@ -632,6 +708,8 @@ function initEventListeners() {
 
   if (elements.restoreBenchmarkBtn) elements.restoreBenchmarkBtn.addEventListener('click', window.restoreBenchmarkData);
   if (elements.refreshBtn) elements.refreshBtn.addEventListener('click', () => {
+    state.pagination.page = 1;
+    fetchAllForDropdown();
     fetchRecords();
     showToast('Refreshing records from database...', 'info');
   });
@@ -646,7 +724,7 @@ function showToast(message, type = 'info') {
   if (!elements.toastContainer) return;
   const toast = document.createElement('div');
   toast.className = 'toast';
-  
+
   let icon = 'fa-circle-info text-cyan';
   if (type === 'success') icon = 'fa-circle-check text-emerald';
   if (type === 'error') icon = 'fa-circle-exclamation text-amber';
