@@ -1,14 +1,14 @@
 <?php
 /**
  * Database Configuration & PDO Connection
- * Target Database: pacl_calculator (MariaDB 10.2 / WampServer)
+ * Supports both environment variables (Docker/PaaS) and direct constants (Shared Hosting/WAMP)
  */
 
-define('DB_HOST', '127.0.0.1');
-define('DB_PORT', '3307'); // Default MariaDB port in WAMP
-define('DB_NAME', 'pacl_calculator');
-define('DB_USER', 'root');
-define('DB_PASS', '');     // Default WampServer root password is empty
+define('DB_HOST', getenv('DB_HOST') ?: '127.0.0.1');
+define('DB_PORT', getenv('DB_PORT') ?: '3307'); // Default MariaDB port in WAMP; tries 3306 automatically
+define('DB_NAME', getenv('DB_NAME') ?: 'pacl_calculator');
+define('DB_USER', getenv('DB_USER') ?: 'root');
+define('DB_PASS', getenv('DB_PASS') !== false ? getenv('DB_PASS') : ''); // WAMP root is empty; update on hosting
 define('DB_CHARSET', 'utf8mb4');
 
 function getDbConnection() {
