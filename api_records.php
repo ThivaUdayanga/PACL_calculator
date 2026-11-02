@@ -50,6 +50,24 @@ switch ($method) {
     // READ / GET: Fetch all records, single record, or stats
     // ----------------------------------------------------
     case 'GET':
+        // Check for seed action via GET
+        if (isset($_GET['action']) && $_GET['action'] === 'seed') {
+            $force = isset($_GET['force']) && $_GET['force'] == '1';
+            $count = $pdo->query("SELECT COUNT(*) FROM `jar_test_records`")->fetchColumn();
+
+            if ($count == 0 || $force) {
+                if (file_exists(__DIR__ . '/seed_db.php')) {
+                    ob_start();
+                    require __DIR__ . '/seed_db.php';
+                    $out = ob_get_clean();
+                    $result = json_decode($out, true);
+                    jsonResponse(true, $result, 'Database seeded successfully.');
+                }
+            } else {
+                jsonResponse(true, ['count' => (int)$count], "Database already contains $count records.");
+            }
+        }
+
         // Check for stats request
         if (isset($_GET['action']) && $_GET['action'] === 'stats') {
             $totalStmt = $pdo->query("SELECT COUNT(*) as total, COUNT(DISTINCT ph) as ph_series_count, MIN(turbidity) as min_turb, MAX(turbidity) as max_turb, MIN(pacl) as min_pacl, MAX(pacl) as max_pacl, AVG(pacl) as avg_pacl FROM `jar_test_records`");
